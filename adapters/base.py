@@ -65,6 +65,14 @@ class RouterAdapter(ABC):
 
     # --- Optional helpers with default implementations ---
 
+    def close(self) -> None:
+        """Release any persistent resources (connections, background threads…).
+
+        Called when the adapter is discarded (config reload, connectivity
+        test). Default is a no-op; override in adapters that keep state
+        alive across calls (e.g. a persistent session or event loop).
+        """
+
     def delete_sms_batch(self, indices: list) -> int:
         """Delete multiple SMS. Returns count deleted.
 

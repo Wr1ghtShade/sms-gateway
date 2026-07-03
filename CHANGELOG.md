@@ -2,6 +2,21 @@
 
 ---
 
+## [1.00.36] — 2026-07-03
+### Sécurité & robustesse
+- **`save_config()`** : `fsync()` ajouté avant le `os.replace()` — les données sont garanties sur disque avant le rename, plus de risque de corruption en cas de coupure d'alimentation brutale du Pi. `fchmod(0o660)` fixe aussi les permissions du fichier temporaire indépendamment de l'umask du process.
+- **`/send_bulk/stream`** : ajout de `@limiter.limit('20 per minute')` — évite qu'un flood de connexions SSE simultanées épuise les threads du serveur de dev Flask.
+
+---
+
+## [1.00.35] — 2026-07-03
+### Performance
+- **`adapters/netgear.py`** : session HTTP + login au modem désormais persistants sur un event loop dédié (thread daemon), au lieu d'ouvrir une nouvelle session et de se reconnecter à chaque appel — impactait notamment le polling `/router/status` toutes les 5s. Reconnexion automatique et sans retry sur erreur `eternalegypt.Error` (session expirée côté routeur), pour éviter tout risque de double-envoi de SMS.
+- **`adapters/base.py`** : ajout de `close()` (no-op par défaut) pour libérer proprement les ressources persistantes d'un adaptateur.
+- **`gateway-sms-webui.py`** : `reload_adapter()` et `/config/test` ferment désormais l'ancien/l'adaptateur temporaire via `close()` — évite une fuite de thread/event loop à chaque reconfiguration ou test de connexion Netgear.
+
+---
+
 ## [1.00.34] — 2026-06-19
 ### Fix
 - **`/send` & `/send_bulk`** : ajout de `normalize_number()` — les numéros avec espaces (`06 XX XX XX XX`), tirets (`06-XX-XX-XX-XX`) ou points (`06.XX.XX.XX.XX`) sont désormais nettoyés avant validation **et** avant envoi au routeur. Formats supportés : `06`, `07`, `+336`, `+337` avec ou sans séparateurs.

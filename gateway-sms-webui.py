@@ -48,10 +48,16 @@ def load_config() -> dict:
         return dict(_CONFIG_EMPTY)
 
 def save_config(cfg: dict) -> None:
-    # Atomic write: write to .tmp then rename — prevents JSON corruption on crash
+    # Atomic write: write to .tmp then rename — prevents JSON corruption on crash.
+    # fsync forces the data to physical disk before the rename (survives a
+    # power loss on the Pi), and fchmod pins the permissions to 660
+    # regardless of umask so www-data keeps read/write access after the swap.
     tmp = CONFIG_PATH + '.tmp'
     with open(tmp, 'w') as f:
         json.dump(cfg, f, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+        os.fchmod(f.fileno(), 0o660)
     os.replace(tmp, CONFIG_PATH)
 
 # Module-level adapter (None si pas encore configuré).
@@ -79,8 +85,11 @@ def reload_adapter(cfg: dict):
     new_adapter = get_adapter(cfg) if cfg.get('pass') else None
     global _adapter, _config
     with _adapter_lock:
+        old_adapter = _adapter
         _config  = cfg
         _adapter = new_adapter
+    if old_adapter is not None:
+        old_adapter.close()
 
 # ---------------------------------------------------------------------------
 # LOGGING — sanitise le mot de passe de tout log/traceback
@@ -278,12 +287,16 @@ def test_config():
     if not validate_router_ip(ip):
         return jsonify({'status': 'error', 'message': f'IP invalide : "{ip}". Seules les adresses IPv4 privées sont acceptées.'}), 400
 
+    adapter = None
     try:
         adapter = get_adapter({'brand': brand, 'ip': ip, 'user': user, 'pass': password})
         result  = adapter.check_health()
         return jsonify({'status': 'ok', 'message': f'Connexion réussie ({brand}).', **result}), 200
     except Exception as e:
         return jsonify({'status': 'error', 'message': f'Échec : {sanitize_exception(e)}'}), 503
+    finally:
+        if adapter is not None:
+            adapter.close()
 
 # ---------------------------------------------------------------------------
 # ROUTES — capabilities (shortcut for the frontend)
@@ -505,6 +518,7 @@ def send_bulk_api():
     return jsonify({'status': 'success', 'message': 'Envoi groupé démarré.', 'total': len(tasks)}), 202
 
 @app.route('/send_bulk/stream')
+@limiter.limit('20 per minute')
 def send_bulk_stream():
     import json as _json
 

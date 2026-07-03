@@ -1,5 +1,6 @@
 """Netgear LTE router adapter using eternalegypt (async wrapped for Flask)."""
 import asyncio
+import threading
 import aiohttp
 import eternalegypt
 from .base import RouterAdapter, NotSupportedError
@@ -8,8 +9,12 @@ from .base import RouterAdapter, NotSupportedError
 class NetgearAdapter(RouterAdapter):
     """Adapter for Netgear LTE modems (LB1120, LB2120, MR1100…).
 
-    eternalegypt is fully async (asyncio + aiohttp). This adapter wraps
-    every call with asyncio.run() so it stays sync-compatible with Flask.
+    eternalegypt is fully async (asyncio + aiohttp). Rather than opening a
+    new aiohttp session and logging in again on every call, this adapter
+    runs a single background event loop for its lifetime and keeps the
+    session + authenticated modem alive across calls — the UI polls
+    get_status() every few seconds, so a fresh login per call was the
+    heaviest network/CPU cost in the project.
     """
 
     brand = "netgear"
@@ -20,23 +25,67 @@ class NetgearAdapter(RouterAdapter):
         self._ip = ip
         self._password = password
 
+        self._session = None
+        self._modem = None
+        self._modem_lock = asyncio.Lock()
+
+        # Coroutines are submitted to this loop from Flask's request threads
+        # (and from background bulk-send/delete threads) via
+        # run_coroutine_threadsafe — the loop itself only ever runs on
+        # _loop_thread, so eternalegypt/aiohttp never see concurrent access.
+        self._loop = asyncio.new_event_loop()
+        self._loop_thread = threading.Thread(target=self._loop.run_forever, daemon=True)
+        self._loop_thread.start()
+
+    # --- Lifecycle ---
+
+    def close(self) -> None:
+        """Tear down the persistent session and stop the background loop."""
+        if not self._loop.is_running():
+            return
+        fut = asyncio.run_coroutine_threadsafe(self._aclose(), self._loop)
+        try:
+            fut.result(timeout=5)
+        except Exception:
+            pass
+        self._loop.call_soon_threadsafe(self._loop.stop)
+
+    async def _aclose(self):
+        if self._session is not None and not self._session.closed:
+            await self._session.close()
+        self._session = None
+        self._modem = None
+
     # --- Async helpers ---
 
-    @staticmethod
-    def _run(coro):
-        """Run an async coroutine synchronously."""
-        return asyncio.run(coro)
+    def _run(self, coro):
+        """Submit a coroutine to the persistent loop and block for the result."""
+        return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
+
+    async def _ensure_modem(self):
+        if self._modem is not None:
+            return self._modem
+        async with self._modem_lock:
+            if self._modem is None:  # re-check: another coroutine may have won the race
+                jar = aiohttp.CookieJar(unsafe=True)
+                self._session = aiohttp.ClientSession(cookie_jar=jar)
+                modem = eternalegypt.Modem(hostname=self._ip, websession=self._session)
+                await modem.login(password=self._password)
+                self._modem = modem
+        return self._modem
 
     async def _with_modem(self, fn):
-        """Open a session, login, execute fn(modem), logout."""
-        jar = aiohttp.CookieJar(unsafe=True)
-        async with aiohttp.ClientSession(cookie_jar=jar) as session:
-            modem = eternalegypt.Modem(hostname=self._ip, websession=session)
-            await modem.login(password=self._password)
-            try:
-                return await fn(modem)
-            finally:
-                await modem.logout()
+        """Run fn against the persistent, authenticated modem session."""
+        modem = await self._ensure_modem()
+        try:
+            return await fn(modem)
+        except eternalegypt.Error:
+            # The session may have expired server-side — drop it so the
+            # *next* call re-authenticates instead of failing repeatedly on
+            # a dead session. Not retried here to avoid replaying a
+            # send_sms whose delivery status is unknown.
+            await self._aclose()
+            raise
 
     # --- RouterAdapter interface ---
 
@@ -93,7 +142,7 @@ class NetgearAdapter(RouterAdapter):
         self._run(self._with_modem(_delete))
 
     def delete_sms_batch(self, indices: list) -> int:
-        """Delete multiple messages, one per session (Netgear has no batch delete)."""
+        """Delete multiple messages in a single session (Netgear has no batch delete)."""
         async def _delete_all(modem):
             for idx in indices:
                 await modem.delete_sms(int(idx))
