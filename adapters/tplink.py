@@ -18,6 +18,7 @@ Username is always 'admin' (TP-Link MR web UI has no configurable username).
 """
 import logging
 import socket
+from contextlib import contextmanager
 from datetime import datetime
 from requests.exceptions import ConnectionError as ReqConnectionError, Timeout as ReqTimeout
 from .base import RouterAdapter
@@ -94,6 +95,22 @@ class TplinkAdapter(RouterAdapter):
             f"variantes essayées : {' | '.join(auth_errors)}"
         )
 
+    @contextmanager
+    def _client(self):
+        """Yield an authorised client, logging out automatically on exit.
+
+        logout() errors are swallowed — the client is being discarded
+        either way and a failed logout shouldn't mask the real result.
+        """
+        client = self._get_client()
+        try:
+            yield client
+        finally:
+            try:
+                client.logout()
+            except Exception:
+                pass
+
     @staticmethod
     def _make_sms_obj(index):
         """Build a minimal SMS object for delete operations (only .id is used)."""
@@ -109,25 +126,13 @@ class TplinkAdapter(RouterAdapter):
     # ── RouterAdapter interface ───────────────────────────────────────────────
 
     def send_sms(self, numbers: list, message: str) -> None:
-        client = self._get_client()
-        try:
+        with self._client() as client:
             for number in numbers:
                 client.send_sms(phone_number=number, message=message)
-        finally:
-            try:
-                client.logout()
-            except Exception:
-                pass
 
     def get_inbox(self, page: int = 1, per_page: int = 20) -> dict:
-        client = self._get_client()
-        try:
+        with self._client() as client:
             raw = client.get_sms()
-        finally:
-            try:
-                client.logout()
-            except Exception:
-                pass
 
         # Normalise to our standard dict format, newest first
         all_sms = [
@@ -155,37 +160,19 @@ class TplinkAdapter(RouterAdapter):
         )
 
     def delete_sms(self, index) -> None:
-        client = self._get_client()
-        try:
+        with self._client() as client:
             client.delete_sms(self._make_sms_obj(index))
-        finally:
-            try:
-                client.logout()
-            except Exception:
-                pass
 
     def delete_sms_batch(self, indices: list) -> int:
         """Single login/logout for the whole batch."""
-        client = self._get_client()
-        try:
+        with self._client() as client:
             for idx in indices:
                 client.delete_sms(self._make_sms_obj(idx))
-        finally:
-            try:
-                client.logout()
-            except Exception:
-                pass
         return len(indices)
 
     def get_status(self) -> dict:
-        client = self._get_client()
-        try:
+        with self._client() as client:
             lte = client.get_lte_status()
-        finally:
-            try:
-                client.logout()
-            except Exception:
-                pass
 
         return {
             'status':      'ok',
@@ -195,9 +182,6 @@ class TplinkAdapter(RouterAdapter):
         }
 
     def check_health(self) -> dict:
-        client = self._get_client()
-        try:
-            client.logout()
-        except Exception:
+        with self._client():
             pass
         return {'status': 'ok', 'router': 'reachable'}

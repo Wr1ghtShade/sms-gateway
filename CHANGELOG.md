@@ -2,6 +2,13 @@
 
 ---
 
+## [1.00.37] — 2026-07-03
+### Fix & Refacto
+- **`/send_bulk`** : ajout de la vérification `MAX_MESSAGE_LENGTH` (480 car.) par tâche — un message arbitrairement long n'est plus envoyé sans contrôle, cohérent avec `/send`.
+- **`adapters/glinet.py`, `tplink.py`, `zte.py`** : le pattern répété `login → try/finally → logout/close` (dupliqué dans 6 méthodes par fichier) est factorisé dans un context manager `_client()`. Comportement inchangé, code plus court et plus sûr (impossible d'oublier le `finally`).
+
+---
+
 ## [1.00.36] — 2026-07-03
 ### Sécurité & robustesse
 - **`save_config()`** : `fsync()` ajouté avant le `os.replace()` — les données sont garanties sur disque avant le rename, plus de risque de corruption en cas de coupure d'alimentation brutale du Pi. `fchmod(0o660)` fixe aussi les permissions du fichier temporaire indépendamment de l'umask du process.

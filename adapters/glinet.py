@@ -2,6 +2,7 @@
 import logging
 import os
 import tempfile
+from contextlib import contextmanager
 from .base import RouterAdapter, NotSupportedError
 
 log = logging.getLogger(__name__)
@@ -56,6 +57,15 @@ class GlinetAdapter(RouterAdapter):
             verify_ssl_certificate=False,
             cache_folder=_CACHE_DIR,
         ).login()
+
+    @contextmanager
+    def _client(self):
+        """Yield a logged-in client, logging out automatically on exit."""
+        client = self._get_client()
+        try:
+            yield client
+        finally:
+            client.logout()
 
     def _discover_bus(self, client) -> str | None:
         """Try to discover the modem bus path from get_info."""
@@ -140,24 +150,18 @@ class GlinetAdapter(RouterAdapter):
     # ── RouterAdapter interface ───────────────────────────────────────────────
 
     def send_sms(self, numbers: list, message: str) -> None:
-        client = self._get_client()
-        try:
+        with self._client() as client:
             bus = self._discover_bus(client)
             for number in numbers:
                 params = {'phone_number': number, 'body': message, 'timeout': 10}
                 if bus:
                     params['bus'] = bus
                 client.request('call', ['modem', 'send_sms', params])
-        finally:
-            client.logout()
 
     def get_inbox(self, page: int = 1, per_page: int = 20) -> dict:
-        client = self._get_client()
-        try:
+        with self._client() as client:
             raw = self._call(client, 'get_sms_list')
             all_sms = self._parse_sms(raw)
-        finally:
-            client.logout()
 
         # Sort newest first, paginate in memory
         start = (page - 1) * per_page
@@ -174,35 +178,26 @@ class GlinetAdapter(RouterAdapter):
         )
 
     def delete_sms(self, index) -> None:
-        client = self._get_client()
-        try:
+        with self._client() as client:
             bus = self._discover_bus(client)
             params = {'hash': str(index)}
             if bus:
                 params['bus'] = bus
             client.request('call', ['modem', 'remove_sms', params])
-        finally:
-            client.logout()
 
     def delete_sms_batch(self, indices: list) -> int:
-        client = self._get_client()
-        try:
+        with self._client() as client:
             bus = self._discover_bus(client)
             for idx in indices:
                 params = {'hash': str(idx)}
                 if bus:
                     params['bus'] = bus
                 client.request('call', ['modem', 'remove_sms', params])
-        finally:
-            client.logout()
         return len(indices)
 
     def get_status(self) -> dict:
-        client = self._get_client()
-        try:
+        with self._client() as client:
             raw = self._call(client, 'get_cells_info')
-        finally:
-            client.logout()
 
         # Normalise cells info — field names vary by model/firmware
         def _get(obj, *keys, default='—'):
@@ -230,9 +225,6 @@ class GlinetAdapter(RouterAdapter):
         }
 
     def check_health(self) -> dict:
-        client = self._get_client()
-        try:
+        with self._client() as client:
             client.request('call', ['modem', 'get_status'])
-        finally:
-            client.logout()
         return {'status': 'ok', 'router': 'reachable'}

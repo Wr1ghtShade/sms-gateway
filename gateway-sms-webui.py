@@ -504,6 +504,10 @@ def send_bulk_api():
     if invalid:
         return jsonify({'status': 'error', 'message': f'Numéro(s) invalide(s) : {", ".join(invalid)}'}), 400
 
+    too_long = [t.get('number') for t in tasks if len(t.get('message', '')) > MAX_MESSAGE_LENGTH]
+    if too_long:
+        return jsonify({'status': 'error', 'message': f'Message trop long (max {MAX_MESSAGE_LENGTH} car.) pour : {", ".join(too_long)}'}), 400
+
     with send_state.lock:
         if send_state.in_progress:
             return jsonify({'status': 'error', 'message': 'Un envoi groupé est déjà en cours.'}), 400

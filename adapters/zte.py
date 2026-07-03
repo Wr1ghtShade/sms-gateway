@@ -25,6 +25,7 @@ instance — safe for concurrent Flask requests.
 import codecs
 import hashlib
 import logging
+from contextlib import contextmanager
 import requests
 
 from .base import RouterAdapter, NotSupportedError
@@ -113,6 +114,15 @@ class ZteAdapter(RouterAdapter):
 
         return session
 
+    @contextmanager
+    def _client(self):
+        """Yield a fresh, authenticated session, closed automatically on exit."""
+        session = self._login()
+        try:
+            yield session
+        finally:
+            session.close()
+
     def _get_ad(self, session: requests.Session) -> str:
         """Compute the AD write-token from router version fields."""
         data = self._get(session, {'cmd': _AD_FIELDS, 'multi_data': '1'})
@@ -149,8 +159,7 @@ class ZteAdapter(RouterAdapter):
     # ── RouterAdapter interface ───────────────────────────────────────────────
 
     def send_sms(self, numbers: list, message: str) -> None:
-        session = self._login()
-        try:
+        with self._client() as session:
             ad = self._get_ad(session)
             body_hex = self._encode_content(message)
             for number in numbers:
@@ -164,12 +173,9 @@ class ZteAdapter(RouterAdapter):
                 })
                 if result.get('result') not in ('success', '0', 0):
                     log.warning('ZTE send_sms result inattendu : %s', result)
-        finally:
-            session.close()
 
     def get_inbox(self, page: int = 1, per_page: int = 20) -> dict:
-        session = self._login()
-        try:
+        with self._client() as session:
             # ZTE pages are 0-indexed
             data = self._get(session, {
                 'cmd':           'sms_data_total',
@@ -179,8 +185,6 @@ class ZteAdapter(RouterAdapter):
                 'tags':          '10',  # received messages
                 'order_by':      'order by id desc',
             })
-        finally:
-            session.close()
 
         messages = []
         for msg in (data.get('messages') or []):
@@ -202,8 +206,7 @@ class ZteAdapter(RouterAdapter):
         raise NotSupportedError("ZTE n'expose pas la boîte d'envoi via son API.")
 
     def delete_sms(self, index) -> None:
-        session = self._login()
-        try:
+        with self._client() as session:
             ad = self._get_ad(session)
             self._post(session, {
                 'goformId':    'DELETE_SMS',
@@ -211,13 +214,10 @@ class ZteAdapter(RouterAdapter):
                 'notCallback': 'true',
                 'AD':          ad,
             })
-        finally:
-            session.close()
 
     def delete_sms_batch(self, indices: list) -> int:
         """Single session for the whole batch."""
-        session = self._login()
-        try:
+        with self._client() as session:
             ad = self._get_ad(session)
             for idx in indices:
                 self._post(session, {
@@ -226,16 +226,11 @@ class ZteAdapter(RouterAdapter):
                     'notCallback': 'true',
                     'AD':          ad,
                 })
-        finally:
-            session.close()
         return len(indices)
 
     def get_status(self) -> dict:
-        session = self._login()
-        try:
+        with self._client() as session:
             data = self._get(session, {'cmd': _SIG_FIELDS, 'multi_data': '1'})
-        finally:
-            session.close()
 
         try:
             bars = int(data.get('signalbar', 0))
@@ -250,6 +245,6 @@ class ZteAdapter(RouterAdapter):
         }
 
     def check_health(self) -> dict:
-        session = self._login()
-        session.close()   # login succeeded → router is reachable
+        with self._client():
+            pass   # login succeeded → router is reachable
         return {'status': 'ok', 'router': 'reachable'}
