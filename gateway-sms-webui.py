@@ -185,7 +185,7 @@ def set_security_headers(response):
         "script-src 'self' 'unsafe-inline'; "
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data:; "
-        "frame-ancestors 'self' http://172.16.2.170:8123;"
+        "frame-ancestors 'self' http://172.16.2.170:8123 http://homeassistant:8123;"
     )
     response.headers['X-Content-Type-Options'] = 'nosniff'
     # Pas de X-Frame-Options : frame-ancestors (CSP) le remplace et supporte

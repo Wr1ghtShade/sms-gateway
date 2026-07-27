@@ -4,7 +4,7 @@
 
 ## [1.00.38] — 2026-07-13
 ### Fix
-- **Headers de sécurité** : `X-Frame-Options: DENY` (v1.00.31) bloquait l'intégration en iframe depuis Home Assistant (widget dashboard). Remplacé par `Content-Security-Policy: frame-ancestors 'self' http://172.16.2.170:8123` — autorise explicitement l'origine HA tout en bloquant tout autre site (protection clickjacking conservée).
+- **Headers de sécurité** : `X-Frame-Options: DENY` (v1.00.31) bloquait l'intégration en iframe depuis Home Assistant (widget dashboard). Remplacé par `Content-Security-Policy: frame-ancestors` — autorise explicitement les origines HA (`http://172.16.2.170:8123` **et** `http://homeassistant:8123`, HA étant accessible par IP ou hostname) tout en bloquant tout autre site (protection clickjacking conservée).
 
 ---
 
