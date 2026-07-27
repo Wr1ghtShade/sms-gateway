@@ -184,10 +184,13 @@ def set_security_headers(response):
         "default-src 'self'; "
         "script-src 'self' 'unsafe-inline'; "
         "style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data:;"
+        "img-src 'self' data:; "
+        "frame-ancestors 'self' http://172.16.2.170:8123;"
     )
     response.headers['X-Content-Type-Options'] = 'nosniff'
-    response.headers['X-Frame-Options'] = 'DENY'
+    # Pas de X-Frame-Options : frame-ancestors (CSP) le remplace et supporte
+    # une allowlist d'origines — X-Frame-Options ne gère qu'une seule valeur
+    # (DENY/SAMEORIGIN) et bloquerait Home Assistant malgré la CSP.
     response.headers['Referrer-Policy'] = 'strict-origin'
     return response
 
